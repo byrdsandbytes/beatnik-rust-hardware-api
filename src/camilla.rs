@@ -70,11 +70,16 @@ impl CamillaInstance {
         file_name(&self.config_path)
     }
 
+    /// Queues a restart without waiting for it: the preamp unit waits (forever)
+    /// in ExecStartPre for the Snapserver pipe, which would block the request.
+    /// A missing unit still fails right away.
     pub async fn restart_service(&self) -> Result<(), CamillaError> {
-        cmd::run("sudo", &["systemctl", "restart", &self.service_name]).await.map_err(|error| {
-            tracing::error!("Failed to restart {} service: {error}", self.service_name);
-            CamillaError::new("Failed to restart CamillaDSP service")
-        })?;
+        cmd::run("sudo", &["systemctl", "restart", "--no-block", &self.service_name]).await.map_err(
+            |error| {
+                tracing::error!("Failed to restart {} service: {error}", self.service_name);
+                CamillaError::new("Failed to restart CamillaDSP service")
+            },
+        )?;
         Ok(())
     }
 

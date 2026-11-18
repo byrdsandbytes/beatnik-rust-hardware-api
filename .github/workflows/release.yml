@@ -79,11 +79,13 @@ jobs:
           systemctl daemon-reload
           systemctl enable beatnik-hardware.service
           systemctl restart beatnik-hardware.service
-          # CamillaDSP binary is not part of this package; do not fail the install without it
+          # CamillaDSP binary is not part of this package; do not fail the install without it.
+          # --no-block: the preamp waits for the Snapserver line-in pipe (no start timeout),
+          # so a blocking restart would hang the install on devices without that pipe.
           systemctl enable camilladsp.service || true
-          systemctl restart camilladsp.service || true
+          systemctl restart --no-block camilladsp.service || true
           systemctl enable camilladsp-preamp.service || true
-          systemctl restart camilladsp-preamp.service || true
+          systemctl restart --no-block camilladsp-preamp.service || true
           EOF
 
           cat > $ROOT/DEBIAN/prerm <<'EOF'
