@@ -8,28 +8,57 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          
-      - name: Install dependencies and build
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check tag matches Cargo.toml version
         run: |
-          npm ci
-          npm run pack-pi
-          npm ci --omit=dev
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${VERSION} (expected v${VERSION})"
+            exit 1
+          fi
+      - run: cargo test --locked
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # 64-bit Raspberry Pi OS (Pi 3/4/5, Zero 2 W)
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+          # 32-bit Raspberry Pi OS; ARMv6 so it also runs on Pi 1 and Zero (W)
+          - target: arm-unknown-linux-gnueabihf
+            arch: armhf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build binary
+        run: cross build --locked --release --target ${{ matrix.target }}
+
+      - name: Build tarball for setup.sh
+        run: |
+          mkdir -p tarball
+          cp target/${{ matrix.target }}/release/beatnik-hardware-api tarball/
+          cp -r camilladsp beatnik-hardware.service camilladsp.service camilladsp-preamp.service setup.sh tarball/
+          tar -czvf beatnik-hardware-api-${{ matrix.arch }}.tar.gz -C tarball .
 
       - name: Build Debian package
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          ARCH=${{ matrix.arch }}
           ROOT=package_root
           mkdir -p $ROOT/opt/beatnik-hardware-api $ROOT/etc/systemd/system $ROOT/DEBIAN
-          cp -r dist camilladsp node_modules package.json $ROOT/opt/beatnik-hardware-api/
+          cp target/${{ matrix.target }}/release/beatnik-hardware-api $ROOT/opt/beatnik-hardware-api/
+          cp -r camilladsp $ROOT/opt/beatnik-hardware-api/
 
           cp beatnik-hardware.service camilladsp.service camilladsp-preamp.service $ROOT/etc/systemd/system/
 
@@ -38,8 +67,8 @@ jobs:
           Version: ${VERSION}
           Section: base
           Priority: optional
-          Architecture: all
-          Depends: nodejs (>= 22.0.0)
+          Architecture: ${ARCH}
+          Depends: libc6
           Maintainer: Beatnik <maintainer@example.com>
           Description: Microservice to configure Raspberry Pi Hardware & CamillaDSP
           EOF
@@ -68,11 +97,25 @@ jobs:
           EOF
           chmod 755 $ROOT/DEBIAN/postinst $ROOT/DEBIAN/prerm
 
-          dpkg-deb --root-owner-group --build $ROOT beatnik-hardware-api_${VERSION}_all.deb
+          dpkg-deb --root-owner-group --build $ROOT beatnik-hardware-api_${VERSION}_${ARCH}.deb
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            beatnik-hardware-api-*.tar.gz
+            beatnik-hardware-api_*.deb
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            beatnik-hardware-api.tar.gz
-            beatnik-hardware-api_*_all.deb
+            beatnik-hardware-api-*.tar.gz
+            beatnik-hardware-api_*.deb

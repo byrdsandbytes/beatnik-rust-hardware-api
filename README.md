@@ -1,6 +1,6 @@
 # beatnik-hardware-api
 
-Microservice for managing audio hardware, Snapcast, and system settings on a Raspberry Pi for the Beatnik Audio System.
+Microservice for managing audio hardware, Snapcast, and system settings on a Raspberry Pi for the Beatnik Audio System. Written in Rust (axum); ships as a single binary.
 
 - **Hardware:** Detects and configures Audio HATs (e.g. HiFiBerry) by writing `/boot/firmware/config.txt` and the active CamillaDSP config.
 - **Snapcast:** Enable/disable/restart the Snapserver and Snapclient.
@@ -8,7 +8,7 @@ Microservice for managing audio hardware, Snapcast, and system settings on a Ras
 
 ## Installation
 
-See the [Installation & Updating Guide](INSTALL.md) for setup, updates, and systemd configuration. To remove the service, see the [Uninstall Guide](UNINSTALL.md). Prefer `apt`? See the Debian package guides: [Install](INSTALL_DEB.md), [Update](UPDATING_DEB.md), [Uninstall](UNINSTALL_DEB.md). Developers: see [Build from Source](BUILD_FROM_SOURCE.md).
+See the [Installation & Updating Guide](INSTALL.md) for setup, updates, and systemd configuration. To remove the service, see the [Uninstall Guide](UNINSTALL.md). Prefer `apt`? See the Debian package guides: [Install](INSTALL_DEB.md), [Update](UPDATING_DEB.md), [Uninstall](UNINSTALL_DEB.md). Developers: see [Build from Source](BUILD_FROM_SOURCE.md) and [Tagging & Releasing](RELEASING.md).
 
 ## API
 
@@ -74,11 +74,8 @@ Test without a Pi by pointing the service at local files:
 
 ```bash
 touch test-config.txt
-mkdir -p test-camilla-configs
-touch test-camilla-configs/profile-a.yml
-ln -sf ./test-camilla-configs/profile-a.yml test-camilla.yml
-
-CONFIG_PATH=./test-config.txt CAMILLA_CONFIG_DIR=./test-camilla-configs CAMILLA_CONFIG_PATH=./test-camilla.yml npm run dev
+mkdir -p test-avahi
+CONFIG_PATH=./test-config.txt CAMILLA_HOME=./test-camilla AVAHI_SERVICE_DIR=./test-avahi cargo run
 ```
 
 ## Notes

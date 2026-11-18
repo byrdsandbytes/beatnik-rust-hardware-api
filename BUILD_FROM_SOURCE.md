@@ -6,9 +6,9 @@ This guide is for developers who want to build, run, and modify the Beatnik Hard
 
 ## Prerequisites
 
-- **Node.js 22** and npm (see [INSTALL.md](INSTALL.md#installing-nodejs-via-nvm) for installing via NVM)
+- **Rust** (stable, via [rustup](https://rustup.rs)): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - **Git**
-- Optional: a Raspberry Pi running Raspberry Pi OS (Bookworm or newer) for testing against real hardware. The API can also run on macOS/Linux with test files (see [Run Locally Without a Pi](#run-locally-without-a-pi)).
+- Optional: a Raspberry Pi running Raspberry Pi OS (Bookworm or newer) for testing against real hardware. The API can also run on Linux/macOS with test files (see [Run Locally Without a Pi](#run-locally-without-a-pi)).
 
 ## 1. Get the Source
 
@@ -17,32 +17,34 @@ git clone https://github.com/byrdsandbytes/beatnik-hardware-api.git
 cd beatnik-hardware-api
 ```
 
-## 2. Install Dependencies
-
-```bash
-npm install
-```
-
-## 3. Project Layout
+## 2. Project Layout
 
 ```text
 src/
-  server.ts          Fastify entry point (port 3000), route registration, mDNS start/stop
+  main.rs            Entry point (axum, port 3000), CORS, mDNS start/stop, graceful shutdown
   routes/            HTTP routes: audio (/api/hardware), system, snapcast, update
-  services/          Business logic: config.txt, CamillaDSP, HAT detection, mDNS, updates
-  types/hats.ts      Supported audio HATs
+  boot_config.rs     Reads/writes /boot/firmware/config.txt
+  camilla.rs         CamillaDSP configs (seeding, active config symlink, output device patching)
+  detection.rs       HAT detection via the EEPROM in the device tree
+  hats.rs            Supported audio HATs
+  mdns.rs            Avahi service file
+  snapcast.rs        Snapserver/Snapclient control
+  system.rs          System info (network, memory, WiFi, storage)
+  update.rs          Updates of bleno, the controller and this API
+  cmd.rs             Running external commands
+camilladsp/          Bundled CamillaDSP configs (shipped next to the binary)
 examples/            Angular client examples for the API
 setup.sh             Production installer/updater (downloads the release artifact)
 beatnik-hardware.service   systemd unit template
 ```
 
-## 4. Run in Development Mode
+## 3. Run in Development Mode
 
 ```bash
-npm run dev
+cargo run
 ```
 
-This starts the server with `ts-node-dev` (auto-restart on file changes, type checking skipped) on `http://0.0.0.0:3000`.
+This builds a debug binary and starts the server on `http://0.0.0.0:3000` (override with `PORT`). Log verbosity is controlled by `RUST_LOG`, e.g. `RUST_LOG=debug cargo run`. For auto-restart on file changes use [cargo-watch](https://crates.io/crates/cargo-watch): `cargo watch -x run`.
 
 Check that it is running:
 ```bash
@@ -55,25 +57,25 @@ By default the API reads and writes system files such as `/boot/firmware/config.
 
 ```bash
 touch test-config.txt
-mkdir -p test-camilla-configs
-touch test-camilla-configs/profile-a.yml
-ln -sf ./test-camilla-configs/profile-a.yml test-camilla.yml
+mkdir -p test-avahi
 
 CONFIG_PATH=./test-config.txt \
 CAMILLA_HOME=./test-camilla \
-CAMILLA_CONFIG_DIR=./test-camilla-configs \
-CAMILLA_CONFIG_PATH=./test-camilla.yml \
-npm run dev
+AVAHI_SERVICE_DIR=./test-avahi \
+cargo run
 ```
 
-Anything that needs `systemctl`, `docker`, or Avahi (Snapcast, update routes, mDNS) will fail or log errors on a machine without them; this is expected. Never run the update routes on a development machine, as they install `.deb` packages with apt and run `git pull` and `docker compose` against `$HOME`.
+On start, the bundled configs are copied into `./test-camilla`. Anything that needs `systemctl`, `docker`, or Avahi (Snapcast, update routes, restarting CamillaDSP) will fail or log errors on a machine without them; this is expected. Never run the update routes on a development machine, as they install `.deb` packages with apt and run `docker compose` against `$BEATNIK_HOME`.
 
 ### Environment Variables
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `PORT` | `3000` | HTTP port (also advertised via mDNS) |
+| `RUST_LOG` | `info` | Log filter, e.g. `debug` or `info,tower_http=warn` |
 | `CONFIG_PATH` | `/boot/firmware/config.txt` | Raspberry Pi boot config |
 | `CAMILLA_HOME` | `/var/lib/beatnik-hardware-api/camilladsp` | Writable CamillaDSP directory (`configs`, `preamp`, `coeffs`). On start, missing files are copied from the bundled `camilladsp/` folder; existing files are never overwritten |
+| `BUNDLED_CAMILLA_DIR` | `camilladsp/` next to the binary, else `./camilladsp` | Bundled CamillaDSP configs |
 | `CAMILLA_CONFIG_DIR` | `<CAMILLA_HOME>/configs` | CamillaDSP config directory |
 | `CAMILLA_CONFIG_PATH` | `<CAMILLA_CONFIG_DIR>/client_config.yml` | Active CamillaDSP config (symlink) |
 | `CAMILLA_SERVICE_NAME` | `camilladsp` | systemd service restarted after config changes |
@@ -86,37 +88,44 @@ Anything that needs `systemctl`, `docker`, or Avahi (Snapcast, update routes, mD
 | `CONTROLLER_CONTAINER` | `beatnik-controller` | Docker container name (update routes) |
 | `CONTROLLER_IMAGE` | read from container | Docker image to pull (update routes) |
 
-## 5. Build
-
-Compile TypeScript to `dist/`:
+## 4. Test and Build
 
 ```bash
-npm run build
+cargo test                 # unit tests
+cargo clippy --all-targets # lints
+cargo fmt                  # formatting
+cargo build --release      # optimized binary in target/release/beatnik-hardware-api
 ```
 
-Run the compiled build:
+### Cross-compiling for the Pi
+
+Building on the Pi works but is slow. To build on another machine, use [cross](https://github.com/cross-rs/cross) (needs Docker):
+
 ```bash
-npm start
+cargo install cross
+cross build --release --target aarch64-unknown-linux-gnu    # 64-bit Raspberry Pi OS (arm64)
+cross build --release --target arm-unknown-linux-gnueabihf  # 32-bit Raspberry Pi OS (armhf, also Pi Zero / Pi 1)
 ```
 
-To only type-check without emitting files:
+The binary ends up in `target/<target>/release/beatnik-hardware-api`.
+
+## 5. Install the Build as a Service on a Pi
+
+Copy the binary and the bundled configs to the Pi, for example into `~/beatnik-hardware-api`:
+
 ```bash
-npx tsc --noEmit
+scp target/aarch64-unknown-linux-gnu/release/beatnik-hardware-api beatnik@<pi-hostname>:~/beatnik-hardware-api/
+scp -r camilladsp beatnik-hardware.service beatnik@<pi-hostname>:~/beatnik-hardware-api/
 ```
 
-## 6. Install the Build as a Service on a Pi
-
-Build on the Pi (or copy the project there), then:
+Then, on the Pi:
 
 ```bash
-npm install
-npm run build
-
-# Copy the service file
+cd ~/beatnik-hardware-api
 sudo cp beatnik-hardware.service /etc/systemd/system/
 
-# IMPORTANT: Edit the service file so WorkingDirectory points to your project
-# directory and ExecStart points to your Node.js executable (find it with: which node)
+# IMPORTANT: Edit the service file so WorkingDirectory points to ~/beatnik-hardware-api
+# and ExecStart to ~/beatnik-hardware-api/beatnik-hardware-api (use absolute paths)
 sudo nano /etc/systemd/system/beatnik-hardware.service
 
 sudo systemctl daemon-reload
@@ -129,36 +138,16 @@ The service runs as `root` because it writes to `/boot/firmware/config.txt`. Fol
 sudo journalctl -u beatnik-hardware.service -f
 ```
 
-> **Note:** Running `./setup.sh` replaces your source build with the latest GitHub release. Don't use it (or the `/api/update/api` route) on a development install.
+> **Note:** Running `./setup.sh` replaces your build with the latest GitHub release. Don't use it (or the `/api/update/api` route) on a development install.
 
-## 7. Create a Release Package
+## 6. Releases
 
-`npm run pack-pi` builds the project and creates `beatnik-hardware-api.tar.gz` containing `dist`, `package.json`, `package-lock.json`, `beatnik-hardware.service`, and `setup.sh`. This is the artifact that `setup.sh` installs on devices.
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) whenever a tag starting with `v` is pushed. The workflow runs the tests, cross-compiles for `arm64` and `armhf`, and attaches per architecture:
 
-```bash
-npm run pack-pi
-```
+- `beatnik-hardware-api-<arch>.tar.gz`: binary, `camilladsp/`, service files and `setup.sh`. This is the artifact `setup.sh` installs.
+- `beatnik-hardware-api_<version>_<arch>.deb`: binary and `camilladsp/` in `/opt/beatnik-hardware-api`, systemd units in `/etc/systemd/system`, service enabled and started by `postinst`. See [INSTALL_DEB.md](INSTALL_DEB.md).
 
-To try the package on a Pi without publishing a release, copy it over and extract it:
-```bash
-scp beatnik-hardware-api.tar.gz beatnik@<pi-hostname>:~/
-ssh beatnik@<pi-hostname>
-mkdir -p ~/beatnik-hardware-api && tar -xzf ~/beatnik-hardware-api.tar.gz -C ~/beatnik-hardware-api
-cd ~/beatnik-hardware-api && npm install --omit=dev
-```
-Then set up the systemd service as in step 6.
-
-### Publishing a Release
-
-Releases are built by GitHub Actions (`.github/workflows/release.yml`) whenever a tag starting with `v` is pushed. The workflow runs `npm ci` and `npm run pack-pi`, then attaches `beatnik-hardware-api.tar.gz` to the GitHub release. It also builds `beatnik-hardware-api_<version>_all.deb` (app and production `node_modules` in `/opt/beatnik-hardware-api`, systemd unit in `/etc/systemd/system`, service enabled and started by `postinst`). Install it with `sudo apt-get install ./beatnik-hardware-api_<version>_all.deb`; it requires `nodejs >= 22` at `/usr/bin/node`.
-
-```bash
-# 1. Bump the version in package.json (also shown via mDNS)
-npm version patch   # or minor / major; creates a commit and a vX.Y.Z tag
-
-# 2. Push the commit and the tag
-git push && git push --tags
-```
+To publish a release (`cargo release patch --execute`, then push), see the [Tagging & Releasing Guide](RELEASING.md).
 
 Devices pick up the new release the next time they run `setup.sh` (or the update route).
 
