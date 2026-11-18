@@ -10,12 +10,13 @@ Related guides: [Install](INSTALL_DEB.md) · [Uninstall](UNINSTALL_DEB.md)
    ```
 2. Download the new `.deb` from the [releases page](https://github.com/byrdsandbytes/beatnik-hardware-api/releases/latest):
    ```bash
-   VERSION=0.7.3   # replace with the new version
-   wget https://github.com/byrdsandbytes/beatnik-hardware-api/releases/download/v${VERSION}/beatnik-hardware-api_${VERSION}_all.deb
+   VERSION=0.9.0   # replace with the new version
+   ARCH=$(dpkg --print-architecture)   # arm64 or armhf
+   wget https://github.com/byrdsandbytes/beatnik-hardware-api/releases/download/v${VERSION}/beatnik-hardware-api_${VERSION}_${ARCH}.deb
    ```
 3. Install it over the existing version:
    ```bash
-   sudo apt-get install ./beatnik-hardware-api_${VERSION}_all.deb
+   sudo apt-get install ./beatnik-hardware-api_${VERSION}_${ARCH}.deb
    ```
 
 dpkg replaces the files in `/opt/beatnik-hardware-api`, and the post-install script reloads systemd and restarts the service. No manual stop or start is needed.
@@ -38,14 +39,18 @@ sudo systemctl edit beatnik-hardware.service
 
 To skip the prompt and keep your edited file during an update, use:
 ```bash
-sudo apt-get install -o Dpkg::Options::="--force-confold" ./beatnik-hardware-api_${VERSION}_all.deb
+sudo apt-get install -o Dpkg::Options::="--force-confold" ./beatnik-hardware-api_${VERSION}_${ARCH}.deb
 ```
 
 ## Downgrade
 
 Install an older `.deb` the same way. Add `--allow-downgrades`:
 ```bash
-sudo apt-get install --allow-downgrades ./beatnik-hardware-api_<older-version>_all.deb
+sudo apt-get install --allow-downgrades ./beatnik-hardware-api_<older-version>_<arch>.deb
+```
+Versions up to 0.8.x are the Node.js implementation (`_all.deb`) and need Node.js 22 at `/usr/bin/node`:
+```bash
+sudo apt-get install --allow-downgrades ./beatnik-hardware-api_0.8.0_all.deb
 ```
 
 ## Notes

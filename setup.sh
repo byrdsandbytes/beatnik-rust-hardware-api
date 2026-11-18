@@ -6,9 +6,20 @@ set -e
 echo "==> Starting Beatnik Hardware API Production Setup..."
 
 REPO="byrdsandbytes/beatnik-hardware-api"
-ARTIFACT="beatnik-hardware-api.tar.gz"
 INSTALL_DIR="$HOME/beatnik-hardware-api"
 SERVICE_FILE="beatnik-hardware.service"
+BINARY="beatnik-hardware-api"
+
+# Release tarballs exist for arm64 (64-bit Raspberry Pi OS) and armhf (32-bit)
+ARCH=$(dpkg --print-architecture)
+case "$ARCH" in
+  arm64|armhf) ;;
+  *)
+    echo "!! Unsupported architecture: $ARCH (supported: arm64, armhf)"
+    exit 1
+    ;;
+esac
+ARTIFACT="beatnik-hardware-api-${ARCH}.tar.gz"
 
 if systemctl is-active --quiet "$SERVICE_FILE"; then
     echo "-- Stopping existing service for update..."
@@ -27,69 +38,30 @@ if [ -z "$DOWNLOAD_URL" ]; then
   exit 1
 fi
 
-echo "-- Downloading release..."
-wget -q -O $ARTIFACT "$DOWNLOAD_URL"
+echo "-- Downloading release ($ARCH)..."
+wget -q -O "$ARTIFACT" "$DOWNLOAD_URL"
 
 echo "-- Extracting release..."
-tar -xzvf $ARTIFACT
-rm $ARTIFACT
+# Leftovers of the former Node.js version
+rm -rf dist node_modules package.json package-lock.json
+tar -xzvf "$ARTIFACT"
+rm "$ARTIFACT"
+chmod +x "$BINARY"
 
-# 1.5 Setup Node.js via NVM
-echo "==> Setting up Node.js (NVM)..."
-
-# Define NVM_DIR (robust method from README/nvm docs)
-export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-
-# Install NVM if not found or incomplete
-if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-  echo "   Installing NVM..."
-  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-fi
-
-# Load NVM
-if [ -s "$NVM_DIR/nvm.sh" ]; then
-  # Use '.' instead of '\.' for script compatibility, and add --no-use
-  . "$NVM_DIR/nvm.sh" --no-use
-else
-  echo "!! Failed to locate nvm.sh"
-  exit 1
-fi
-
-# Install and use Node.js 22
-echo "   Installing/Using Node.js 22..."
-nvm install 22
-nvm use 22
-
-# 2. Install Dependencies
-echo "==> Installing Production Dependencies..."
-npm install --omit=dev
-
-# 4. Configure Systemd Service
+# Configure Systemd Service
 echo "==> Configuring Systemd Service..."
 
-# Get absolute path to node executable
-NODE_EXEC=$(nvm which 22)
-echo "   Node executable found at: $NODE_EXEC"
-
-# Create a temporary service file
 TEMP_SERVICE_FILE="${SERVICE_FILE}.tmp"
-
 cp "$SERVICE_FILE" "$TEMP_SERVICE_FILE"
 
-# Update WorkingDirectory
-# Escape slashes for sed
+# Point WorkingDirectory and ExecStart to the install directory (escape slashes for sed)
 ESCAPED_INSTALL_DIR=$(echo "$INSTALL_DIR" | sed 's/\//\\\//g')
 sed -i "s/^WorkingDirectory=.*/WorkingDirectory=$ESCAPED_INSTALL_DIR/" "$TEMP_SERVICE_FILE"
-
-# Update ExecStart
-# We want: ExecStart=/path/to/node dist/server.js
-# Escape slashes for sed
-ESCAPED_NODE_EXEC=$(echo "$NODE_EXEC" | sed 's/\//\\\//g')
-sed -i "s/^ExecStart=.*/ExecStart=$ESCAPED_NODE_EXEC dist\/server.js/" "$TEMP_SERVICE_FILE"
+sed -i "s/^ExecStart=.*/ExecStart=$ESCAPED_INSTALL_DIR\/$BINARY/" "$TEMP_SERVICE_FILE"
 
 echo "   Service file patched with local paths."
 
-# 5. Install Service (requires sudo)
+# Install Service (requires sudo)
 echo "==> Installing Service to /etc/systemd/system/ (requires sudo)..."
 sudo cp "$TEMP_SERVICE_FILE" "/etc/systemd/system/$SERVICE_FILE"
 rm "$TEMP_SERVICE_FILE"

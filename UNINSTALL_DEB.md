@@ -45,7 +45,7 @@ curl http://localhost:3000/api/hardware/status       # should fail to connect
 
 ## Node.js
 
-The package does not install Node.js. Other Beatnik components such as `beatnik-bleno` also use it, so only remove it if nothing else needs it:
+Versions up to 0.8.x of this package required Node.js; the current version does not. Other Beatnik components such as `beatnik-bleno` still use it, so only remove it if nothing else needs it:
 
 ```bash
 sudo apt-get remove nodejs

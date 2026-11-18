@@ -38,7 +38,7 @@ Avahi picks up the change automatically; no restart is needed.
 
 ## 4. Delete the Installation Directory
 
-This removes the API, its `node_modules`, and `setup.sh`:
+This removes the API binary, its bundled configs, and `setup.sh`:
 
 ```bash
 rm -rf ~/beatnik-hardware-api
@@ -63,7 +63,7 @@ curl http://localhost:3000/api/hardware/status
 
 ## Optional: Remove Node.js and NVM
 
-The setup script installs NVM and Node.js 22 if they were missing. **Only remove them if nothing else on the Pi uses them** — other Beatnik components such as `beatnik-bleno` also run on Node.js.
+The API no longer needs Node.js, but the setup script of versions up to 0.8.x installed NVM and Node.js 22 if they were missing. **Only remove them if nothing else on the Pi uses them** — other Beatnik components such as `beatnik-bleno` also run on Node.js.
 
 Remove only Node.js 22 (keeps NVM):
 ```bash
